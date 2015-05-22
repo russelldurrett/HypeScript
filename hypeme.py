@@ -27,6 +27,7 @@ from bs4 import BeautifulSoup
 import json
 import string
 import os
+import multiprocessing as mp 
 
 ##############AREA_TO_SCRAPE################
 # This is the general area that you'd 
@@ -34,8 +35,13 @@ import os
 # ex. 'popular', 'latest', '<username>' or
 # 'track/<id>'
 ############################################
-AREA_TO_SCRAPE = 'popular'
-NUMBER_OF_PAGES = 3
+try:
+  sys.argv[1]
+except IndexError, e:
+  AREA_TO_SCRAPE = 'popular'   
+else:
+  AREA_TO_SCRAPE = sys.argv[1]
+NUMBER_OF_PAGES = 1
 
 ###DO NOT MODIFY THESE UNLES YOU KNOW WHAT YOU ARE DOING####
 DEBUG = False
@@ -56,6 +62,7 @@ class HypeScraper:
     
   def start(self):
     print "--------STARTING DOWNLOAD--------"
+    print "##### WARNING ##### - this will spawn up to 20 processes"
     print "\tURL : {} ".format(HYPEM_URL)
     print "\tPAGES: {}".format(NUMBER_OF_PAGES)
     
@@ -75,7 +82,15 @@ class HypeScraper:
       
       print "\tPARSED {} SONGS".format(len(tracks) )
       
-      self.download_songs(tracks, cookie)
+      # Would probably be better to pool ( pool = mp.Pool(processes=4) and pool.apply_async) 
+      processes = [mp.Process(target=self.download_song, args=(track,cookie)) for track in tracks] 
+      for p in processes: 
+        p.start()
+      for p in processes: 
+        p.join()
+
+      print 'Download Processes Finished'     
+      # self.download_songs(tracks, cookie)
       
       
   def get_html_file(self, url):
@@ -109,50 +124,52 @@ class HypeScraper:
       return track_list
       
   #tracks have id, title, artist, key
-  def download_songs(self, tracks, cookie):
+  def download_song(self, track, cookie):
   
-    print "\tDOWNLOADING SONGS..."
-    for track in tracks:
+    print "\tDOWNLOADING SONG..."
     
-      key = track[u"key"]
-      id = track[u"id"]
-      artist = removeDisallowedFilenameChars(track[u"artist"])
-      title = removeDisallowedFilenameChars(track[u"song"])
-      type = track[u"type"]
+    key = track[u"key"]
+    id = track[u"id"]
+    artist = removeDisallowedFilenameChars(track[u"artist"])
+    title = removeDisallowedFilenameChars(track[u"song"])
+    type = track[u"type"]
+    
+    print "\tFETCHING SONG...."
+    
+    print u"\t{} by {}".format(title, artist)
+    
+    if type is False:
+      print "\tSKIPPING SONG SINCE NO LONGER AVAILABLE..."
+     
+    try:
+      serve_url = "http://hypem.com/serve/source/{}/{}".format(id, key)
+      request = urllib2.Request(serve_url, "" , {'Content-Type': 'application/json'})
+      request.add_header('cookie', cookie)
+      response = urllib2.urlopen(request)
+      song_data_json = response.read()
+      response.close()
+      song_data = json.loads(song_data_json)
+      url = song_data[u"url"]
       
-      print "\tFETCHING SONG...."
-      
-      print u"\t{} by {}".format(title, artist)
-      
-      if type is False:
-        print "\tSKIPPING SONG SINCE NO LONGER AVAILABLE..."
-        continue
-       
-      try:
-        serve_url = "http://hypem.com/serve/source/{}/{}".format(id, key)
-        request = urllib2.Request(serve_url, "" , {'Content-Type': 'application/json'})
-        request.add_header('cookie', cookie)
-        response = urllib2.urlopen(request)
-        song_data_json = response.read()
-        response.close()
-        song_data = json.loads(song_data_json)
-        url = song_data[u"url"]
-        
-        download_response = urllib2.urlopen(url)
-        filename = "{} - {}.mp3".format(artist, title)
-        if os.path.exists(filename):
-          print("File already exists , skipping")
-        else:
-          mp3_song_file = open(filename, "wb")
-          mp3_song_file.write(download_response.read() )
-          mp3_song_file.close()
-      except urllib2.HTTPError, e:
-            print 'HTTPError = ' + str(e.code) + " trying hypem download url."
-      except urllib2.URLError, e:
-            print 'URLError = ' + str(e.reason)  + " trying hypem download url."
-      except Exception, e:
-            print 'generic exception: ' + str(e)
-      
+      download_response = urllib2.urlopen(url)
+      filename = "{} - {}.mp3".format(artist, title)
+      if os.path.exists(filename):
+        print("File already exists , skipping")
+      else:
+        mp3_song_file = open(filename, "wb")
+        mp3_song_file.write(download_response.read() )
+        mp3_song_file.close()
+        return 'Saved ' + filename
+    except urllib2.HTTPError, e:
+          print 'HTTPError = ' + str(e.code) + " trying hypem download url."
+          return 'HTTPError retrieving ' + artist + ' - ' + title
+    except urllib2.URLError, e:
+          print 'URLError = ' + str(e.reason)  + " trying hypem download url."
+          return 'URLError retrieving ' + filename 
+    except Exception, e:
+          print 'generic exception: ' + str(e)
+          return 'generic exception retrieving ' + filename 
+    
   
      
 
